@@ -112,14 +112,19 @@ describe("isCashFlowPreviousButtonDisabled", () => {
     return button;
   };
 
-  test.each([
+  const disabledButtonAttributes: Array<Record<string, string | null>> = [
     { disabled: "" },
     { "aria-disabled": "true" },
     { class: "fc-button-prev fc-state-disabled" },
     { class: "previous is-disabled" },
-  ])("明示的な無効化 $disabled $aria-disabled $class を検出する", async (attributes) => {
-    await expect(isCashFlowPreviousButtonDisabled(createButton(attributes))).resolves.toBe(true);
-  });
+  ];
+
+  test.each(disabledButtonAttributes)(
+    "明示的な無効化 $disabled $aria-disabled $class を検出する",
+    async (attributes: Record<string, string | null>) => {
+      await expect(isCashFlowPreviousButtonDisabled(createButton(attributes))).resolves.toBe(true);
+    },
+  );
 
   test("無効化属性やクラスがなければ通信待ちをスキップしない", async () => {
     await expect(
