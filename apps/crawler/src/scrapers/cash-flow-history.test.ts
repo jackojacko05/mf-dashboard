@@ -194,7 +194,7 @@ describe("scrapeCashFlowHistory", () => {
           count: vi.fn<() => Promise<number>>().mockResolvedValue(0),
         } as unknown as Locator;
       }),
-      waitForRequest: vi.fn<() => Promise<typeof request>>().mockResolvedValue(request),
+      waitForRequest: vi.fn<() => Promise<typeof cashFlowRequest>>().mockResolvedValue(cashFlowRequest),
       waitForResponse: vi
         .fn<() => Promise<never>>()
         .mockRejectedValue(new Error("Navigation Timeout")),
@@ -233,7 +233,7 @@ describe("scrapeCashFlowHistory", () => {
       goto: vi.fn<() => Promise<null>>().mockResolvedValue(null),
       evaluate: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
       waitForFunction: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
-      waitForRequest: vi.fn<() => Promise<typeof request>>().mockResolvedValue(request),
+      waitForRequest: vi.fn<() => Promise<typeof cashFlowRequest>>().mockResolvedValue(cashFlowRequest),
       waitForResponse: vi.fn<() => Promise<unknown>>().mockResolvedValue({
         url: vi.fn<() => string>().mockReturnValue("/cf/fetch"),
         status: vi.fn<() => number>().mockReturnValue(200),
@@ -750,11 +750,11 @@ describe("scrapeCashFlowHistory no-op navigation", () => {
       evaluate: vi.fn().mockResolvedValue(undefined),
       waitForFunction: vi.fn().mockResolvedValue(undefined),
       waitForRequest: vi.fn().mockImplementation(async () => {
-        if (navigationResults[navigationIndex] === "success") return request;
+        if (navigationResults[navigationIndex] === "success") return cashFlowRequest;
         throw new Error("Timeout 1000ms");
       }),
       waitForResponse: vi.fn().mockImplementation(async () => {
-        if (navigationResults[navigationIndex] === "success") return response(200);
+        if (navigationResults[navigationIndex] === "success") return cashFlowResponse(200);
         throw new Error("Timeout 1000ms");
       }),
       locator: vi.fn().mockImplementation((selector: string) => {
