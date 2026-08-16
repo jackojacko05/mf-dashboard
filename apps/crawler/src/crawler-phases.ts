@@ -6,7 +6,6 @@ import { initDb, type Db } from "@mf-dashboard/db";
 import { buildAccountIdMap } from "@mf-dashboard/db/repository/accounts";
 import { saveScrapedDataBatch } from "@mf-dashboard/db/repository/save-scraped-data";
 import {
-  hasCashFlowPeriod,
   saveTransactionsForMonths,
   type TransactionPeriodReplacement,
 } from "@mf-dashboard/db/repository/transactions";
@@ -29,7 +28,7 @@ import { buildScrapedData, buildGroupOnlyScrapedData } from "./data-builder.js";
 import {
   getHistoryMaxMonthsFromAnchor,
   getHistoryMonth,
-  getHistoryMonthFromAnchor,
+  parseHistoryMaxMonths,
 } from "./history-months.js";
 import { runHooks } from "./hooks/runner.js";
 import { debug, error, info, log, phase, warn } from "./logger.js";
@@ -51,6 +50,7 @@ export interface CrawlerConfig {
   dbExists: boolean;
   scrapeMode: string;
   isHistoryMode: boolean;
+  historyMaxMonths: number;
   isDebug: boolean;
   isHeaded: boolean;
 }
@@ -104,6 +104,7 @@ export function loadCrawlerConfig(
     dbExists,
     scrapeMode,
     isHistoryMode: scrapeMode === "history",
+    historyMaxMonths: parseHistoryMaxMonths(env.HISTORY_MAX_MONTHS),
     isDebug: env.DEBUG === "true",
     isHeaded: env.HEADED === "true",
   };
@@ -114,6 +115,7 @@ function logCrawlerOptions(config: CrawlerConfig): void {
   log(`SKIP_REFRESH:   ${config.skipRefresh}`);
   info(`CLEANUP_GROUPS: ${config.cleanupGroups}`);
   log(`SCRAPE_MODE:    ${config.scrapeMode} (DB exists: ${config.dbExists})`);
+  log(`HISTORY_MAX_MONTHS: ${config.historyMaxMonths}`);
   log(`DEBUG:          ${config.isDebug}`);
   log(`HEADED:         ${config.isHeaded}`);
   log(`AUTH_STATE:     ${config.authState}`);
@@ -257,7 +259,10 @@ export async function runInstitutionCategoryPhase(page: Page): Promise<Map<strin
 export async function runCashFlowHistoryPhase(
   db: Db,
   page: Page,
-  config: Pick<CrawlerConfig, "isHistoryMode"> & { activeAccountingMonth?: string },
+  config: Pick<CrawlerConfig, "isHistoryMode"> & {
+    activeAccountingMonth?: string;
+    historyMaxMonths?: number;
+  },
   categoryDecision: CategoryDecisionRuntime = { config: null, usage: { llmCallsUsed: 0 } },
   progress?: CrawlerProgressReporter,
   publishHistory: (months: TransactionPeriodReplacement[]) => Promise<number[]> = async (
@@ -271,19 +276,16 @@ export async function runCashFlowHistoryPhase(
 
   const now = new Date();
   const activeAccountingMonth = config.activeAccountingMonth ?? getHistoryMonth(now, 0);
-  const maxMonths = getHistoryMaxMonthsFromAnchor(activeAccountingMonth);
+  const maxMonths = config.historyMaxMonths ?? getHistoryMaxMonthsFromAnchor(activeAccountingMonth);
 
   // Always refresh the current and previous periods so transactions posted late by an
-  // institution are incorporated. History mode extends that window to the oldest gap.
+  // institution are incorporated. History mode traverses from the current period
+  // until the UI reports that no older period is available.
   let monthsToFetch = Math.min(2, maxMonths);
-  if (config.isHistoryMode) {
-    for (let i = 2; i < maxMonths; i++) {
-      const month = getHistoryMonthFromAnchor(activeAccountingMonth, i);
-      if (!(await hasCashFlowPeriod(db, month))) {
-        monthsToFetch = i + 1;
-      }
-    }
-  }
+  // History traversal is bounded defensively, but the scraper itself decides
+  // when the UI has reached its oldest available month. Do not derive a stop
+  // point from existing DB periods: reruns must repair every historical period.
+  if (config.isHistoryMode) monthsToFetch = maxMonths;
 
   info(`Fetching ${monthsToFetch} months`);
 

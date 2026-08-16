@@ -203,6 +203,7 @@ describe("loadCrawlerConfig", () => {
       DB_PATH: "/tmp/test.db",
       DEBUG: "true",
       HEADED: "true",
+      HISTORY_MAX_MONTHS: "360",
       SCRAPE_MODE: "history",
       SKIP_REFRESH: "true",
     };
@@ -219,6 +220,7 @@ describe("loadCrawlerConfig", () => {
     expect(config.dbExists).toBe(true);
     expect(config.scrapeMode).toBe("history");
     expect(config.isHistoryMode).toBe(true);
+    expect(config.historyMaxMonths).toBe(360);
     expect(config.isDebug).toBe(true);
     expect(config.isHeaded).toBe(true);
   });
@@ -318,17 +320,16 @@ describe("runCashFlowHistoryPhase", () => {
     expect(publishHistory).toHaveBeenCalledWith([]);
   });
 
-  test("history modeで既存期間が揃っていても当月と直前期間を再取得する", async () => {
-    vi.mocked(hasCashFlowPeriod).mockResolvedValue(true);
+  test("history modeでは既存期間の有無にかかわらずUIの最古月まで走査する", async () => {
     vi.mocked(scrapeCashFlowHistory).mockResolvedValue([]);
 
     await runCashFlowHistoryPhase({} as never, {} as never, { isHistoryMode: true });
 
-    expect(scrapeCashFlowHistory).toHaveBeenCalledWith({}, 2, expect.any(Object));
+    expect(hasCashFlowPeriod).not.toHaveBeenCalled();
+    expect(scrapeCashFlowHistory).toHaveBeenCalledWith({}, 240, expect.any(Object));
   });
 
-  test("締め日後は現在の会計期間月を起点に未取得期間を探す", async () => {
-    vi.mocked(hasCashFlowPeriod).mockImplementation(async (_db, month) => month !== "2026-07");
+  test("history modeの走査上限は会計期間の開始月に依存しない", async () => {
     vi.mocked(scrapeCashFlowHistory).mockResolvedValue([]);
 
     await runCashFlowHistoryPhase({} as never, {} as never, {
@@ -336,8 +337,8 @@ describe("runCashFlowHistoryPhase", () => {
       activeAccountingMonth: "2026-09",
     });
 
-    expect(hasCashFlowPeriod).toHaveBeenCalledWith({}, "2026-07");
-    expect(scrapeCashFlowHistory).toHaveBeenCalledWith({}, 3, expect.any(Object));
+    expect(hasCashFlowPeriod).not.toHaveBeenCalled();
+    expect(scrapeCashFlowHistory).toHaveBeenCalledWith({}, 240, expect.any(Object));
   });
 
   test("history modeでは未取得の最古会計期間まで取得する", async () => {

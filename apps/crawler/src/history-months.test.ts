@@ -1,9 +1,12 @@
 import { describe, expect, test } from "vitest";
 import {
+  DEFAULT_HISTORY_MAX_MONTHS,
   getHistoryMaxMonths,
   getHistoryMaxMonthsFromAnchor,
   getHistoryMonth,
   getHistoryMonthFromAnchor,
+  parseHistoryMaxMonths,
+  validateHistoryMonthProgression,
 } from "./history-months.js";
 
 describe("getHistoryMonth", () => {
@@ -29,14 +32,30 @@ describe("getHistoryMonth", () => {
     expect(getHistoryMonth(now, 1)).toBe("2026-06");
   });
 
-  test("履歴取得月数もJST基準の当月から計算する", () => {
+  test("履歴取得の防御上限は会計月ではなく十分大きな固定値", () => {
     const now = new Date("2026-01-31T16:00:00Z"); // 2026-02-01 01:00 JST
 
-    expect(getHistoryMaxMonths(now)).toBe(14);
+    expect(getHistoryMaxMonths(now)).toBe(DEFAULT_HISTORY_MAX_MONTHS);
   });
 
-  test("締め日後の会計期間月から前年1月までを計算する", () => {
-    expect(getHistoryMaxMonthsFromAnchor("2026-09")).toBe(21);
+  test("履歴取得上限はアンカー月に依存しない", () => {
+    expect(getHistoryMaxMonthsFromAnchor("2026-09")).toBe(DEFAULT_HISTORY_MAX_MONTHS);
     expect(getHistoryMonthFromAnchor("2026-09", 20)).toBe("2025-01");
+  });
+
+  test("環境変数の上限は正の整数だけを受け付ける", () => {
+    expect(parseHistoryMaxMonths(undefined)).toBe(DEFAULT_HISTORY_MAX_MONTHS);
+    expect(parseHistoryMaxMonths("240")).toBe(240);
+    expect(parseHistoryMaxMonths("20")).toBe(20);
+    expect(parseHistoryMaxMonths("0")).toBe(DEFAULT_HISTORY_MAX_MONTHS);
+    expect(parseHistoryMaxMonths("not-a-number")).toBe(DEFAULT_HISTORY_MAX_MONTHS);
+  });
+
+  test("UIの前月遷移は1月ずつ進むことを検証する", () => {
+    expect(validateHistoryMonthProgression("2026-09", "2026-08")).toBe(true);
+    expect(validateHistoryMonthProgression("2026-09", "2026-09")).toBe(false);
+    expect(() => validateHistoryMonthProgression("2026-09", "2026-07")).toThrow(
+      "Unexpected cash flow month progression",
+    );
   });
 });
