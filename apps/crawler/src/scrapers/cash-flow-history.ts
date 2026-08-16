@@ -22,6 +22,7 @@ const DETAIL_COLUMNS = {
 export const SUMMARY_COLUMNS = { INCOME: 0, EXPENSE: 2, BALANCE: 4 } as const;
 
 const TEXT_TIMEOUT = 1000;
+const TEXT_READ_ATTEMPTS = 3;
 const SUMMARY_TIMEOUT = 3000;
 const CASH_FLOW_AJAX_STATE = "__mfDashboardCashFlowAjax";
 const CASH_FLOW_AMOUNT_PATTERN =
@@ -123,20 +124,27 @@ export async function waitForCashFlowFetchApplied(
   }
 }
 
+async function readTextWithRetry(locator: Locator, timeout: number): Promise<string | null> {
+  for (let attempt = 0; attempt < TEXT_READ_ATTEMPTS; attempt++) {
+    try {
+      return (await locator.textContent({ timeout }))?.trim() ?? "";
+    } catch {
+      // Cash-flow rows can be replaced immediately after the monthly AJAX update.
+      // Resolving the locator again is enough once the replacement has settled.
+    }
+  }
+  return null;
+}
+
 async function getText(locator: Locator, timeout = TEXT_TIMEOUT): Promise<string> {
-  const text = await locator.textContent({ timeout }).catch(() => "");
-  return (text ?? "").trim();
+  return (await readTextWithRetry(locator, timeout)) ?? "";
 }
 
 async function getTextWithFailureSignal(
   locator: Locator,
   timeout = TEXT_TIMEOUT,
 ): Promise<string | null> {
-  try {
-    return (await locator.textContent({ timeout }))?.trim() ?? "";
-  } catch {
-    return null;
-  }
+  return readTextWithRetry(locator, timeout);
 }
 
 async function getOptionalText(locator: Locator, timeout = TEXT_TIMEOUT): Promise<string | null> {

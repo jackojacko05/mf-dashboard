@@ -315,6 +315,50 @@ describe("scrapeCashFlowHistory", () => {
 });
 
 describe("parseDetailRow", () => {
+  test("月切替直後の一時的なセル取得失敗を再試行する", async () => {
+    const missingChild = {
+      count: vi.fn<() => Promise<number>>().mockResolvedValue(0),
+    } as unknown as Locator;
+    const accountCell = {
+      locator: vi.fn<(selector: string) => Locator>().mockReturnValue(missingChild),
+      textContent: vi.fn<Locator["textContent"]>().mockResolvedValue("Account A"),
+    } as unknown as Locator;
+    const texts = new Map([
+      [1, "07/01"],
+      [2, "Transaction A"],
+      [3, "1,000"],
+      [5, ""],
+      [6, ""],
+    ]);
+    const descriptionText = vi
+      .fn<Locator["textContent"]>()
+      .mockRejectedValueOnce(new Error("Detached cell"))
+      .mockResolvedValue("Transaction A");
+    const cells = {
+      nth: vi.fn<(index: number) => Locator>((index) => {
+        if (index === 4) return accountCell;
+        return {
+          textContent:
+            index === 2
+              ? descriptionText
+              : vi.fn<Locator["textContent"]>().mockResolvedValue(texts.get(index) ?? ""),
+        } as unknown as Locator;
+      }),
+    } as unknown as Locator;
+    const row = {
+      getAttribute: vi
+        .fn<Locator["getAttribute"]>()
+        .mockImplementation(async (name) => (name === "id" ? "js-transaction-row-a" : "")),
+      locator: vi.fn<(selector: string) => Locator>().mockReturnValue(cells),
+    } as unknown as Locator;
+
+    await expect(parseDetailRow(row, 2026)).resolves.toMatchObject({
+      description: "Transaction A",
+      type: "transfer",
+    });
+    expect(descriptionText).toHaveBeenCalledTimes(2);
+  });
+
   test("正常に取得した空の内容欄を保持する", async () => {
     const missingChild = {
       count: vi.fn<() => Promise<number>>().mockResolvedValue(0),
