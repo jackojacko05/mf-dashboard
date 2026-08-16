@@ -29,7 +29,7 @@ gcloud run jobs deploy "${JOB}" \
   --source="${ROOT}" \
   --service-account="${SA}" \
   --set-env-vars="${ENV_VARS}" \
-  --memory=1Gi \
+  --memory=2Gi \
   --cpu=1 \
   --max-retries=0 \
   --task-timeout=3600s \

@@ -67,6 +67,8 @@ re-login; without it, rerun the browser bootstrap when the session expires.
 Account refresh waits at most five minutes per run. A still-updating institution
 is kept in `account_status_effective` as stale/incomplete instead of blocking the
 entire daily ingestion for the upstream crawler's twenty-minute default.
+The job uses 2 GiB of memory so Chromium can retain the initial 20-month crawl
+without being terminated by Cloud Run.
 
 The setup grants `HERMES_READER_SA` read-only access to the finance dataset. It
 defaults to `hermes-vps-sa@${GCP_PROJECT_ID}.iam.gserviceaccount.com`.
