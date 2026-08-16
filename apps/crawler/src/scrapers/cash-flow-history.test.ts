@@ -692,6 +692,29 @@ describe("waitForCashFlowRequestAndResponse", () => {
     expect(click).toHaveBeenCalledOnce();
   });
 
+  test("リクエスト観測とレスポンス待ちのtimeoutを分離する", async () => {
+    const waitForRequest = vi.fn().mockResolvedValue(request);
+    const waitForResponse = vi.fn().mockResolvedValue(response(200));
+    const page = { waitForRequest, waitForResponse } as unknown as Page;
+
+    await expect(waitForCashFlowRequestAndResponse(page, async () => undefined)).resolves.toBe(true);
+
+    expect(waitForRequest).toHaveBeenCalledWith(expect.any(Function), { timeout: 1000 });
+    expect(waitForResponse).toHaveBeenCalledWith(expect.any(Function), { timeout: 30000 });
+  });
+
+  test("遅延したレスポンスでも成功する", async () => {
+    const delayedResponse = new Promise<ReturnType<typeof response>>((resolve) => {
+      setTimeout(() => resolve(response(200)), 10);
+    });
+    const page = {
+      waitForRequest: vi.fn().mockResolvedValue(request),
+      waitForResponse: vi.fn().mockReturnValue(delayedResponse),
+    } as unknown as Page;
+
+    await expect(waitForCashFlowRequestAndResponse(page, async () => undefined)).resolves.toBe(true);
+  });
+
   test("リクエストありHTTP非200はthrowする", async () => {
     const page = {
       waitForRequest: vi.fn().mockResolvedValue(request),
