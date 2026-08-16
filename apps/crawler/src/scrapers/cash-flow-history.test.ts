@@ -704,7 +704,7 @@ describe("waitForCashFlowRequestAndResponse", () => {
   });
 
   test("遅延したレスポンスでも成功する", async () => {
-    const delayedResponse = new Promise<typeof response(200)>((resolve) => {
+    const delayedResponse = new Promise<ReturnType<typeof response>>((resolve) => {
       setTimeout(() => resolve(response(200)), 10);
     });
     const page = {
