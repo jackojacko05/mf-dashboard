@@ -10,7 +10,7 @@ JOB=moneyforward-scraper
 SA="moneyforward-scraper-sa@${PROJECT_ID}.iam.gserviceaccount.com"
 
 DEPLOY_ARGS=(--clear-secrets)
-ENV_VARS="GCP_PROJECT_ID=${PROJECT_ID},GCP_REGION=${REGION},BQ_DATASET=${DATASET},GCS_BUCKET=${BUCKET},GCS_STATE_PREFIX=moneyforward,MAX_WAIT_MINUTES=20,CLEANUP_GROUPS=true"
+ENV_VARS="GCP_PROJECT_ID=${PROJECT_ID},GCP_REGION=${REGION},BQ_DATASET=${DATASET},GCS_BUCKET=${BUCKET},GCS_STATE_PREFIX=moneyforward,MAX_WAIT_MINUTES=5,CLEANUP_GROUPS=true"
 if gcloud secrets describe mf-op-service-account-token --project="${PROJECT_ID}" >/dev/null 2>&1; then
   for value in OP_VAULT OP_ITEM OP_TOTP_FIELD; do
     if [[ -z "${!value:-}" ]]; then

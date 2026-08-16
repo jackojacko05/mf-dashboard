@@ -3,7 +3,7 @@ import type { CashFlowSummary, CashFlowItem } from "@mf-dashboard/db/types";
 import { mfUrls } from "@mf-dashboard/meta/urls";
 import type { Locator, Page } from "playwright";
 import { getHistoryMonth } from "../history-months.js";
-import { log, debug } from "../logger.js";
+import { log, debug, warn } from "../logger.js";
 import { parseJapaneseNumber, convertDateToIso } from "../parsers.js";
 import type { CashFlowHistoryResult } from "../types.js";
 
@@ -327,8 +327,13 @@ export async function parseDetailRow(
     getTextWithFailureSignal(cells.nth(DETAIL_COLUMNS.SUB_CATEGORY)),
   ]);
 
+  // Money Forward occasionally renders an otherwise complete transaction without
+  // category cells. Preserve the transaction and make the missing classification
+  // explicit; the ID, date, description, amount, and row state remain mandatory.
+  const category = categoryText ?? "未分類";
+  const subCategory = subCategoryText ?? "";
   if (categoryText === null || subCategoryText === null) {
-    throw incompleteCashFlowRow(["category"]);
+    warn("Cash flow category cells unavailable; using an unclassified fallback.");
   }
 
   const { accountFrom, accountTo, hasTransferBox } = await parseAccountCell(
@@ -337,7 +342,7 @@ export async function parseDetailRow(
 
   const isExcludedFromCalculation = (rowClass ?? "").includes("mf-grayout");
 
-  const type = await detectTransactionType(cells.nth(DETAIL_COLUMNS.AMOUNT), categoryText);
+  const type = await detectTransactionType(cells.nth(DETAIL_COLUMNS.AMOUNT), category);
   const isTransfer = type === "transfer";
 
   let accountName: string | undefined;
@@ -357,8 +362,8 @@ export async function parseDetailRow(
   return {
     mfId,
     date,
-    category: categoryText || null,
-    subCategory: subCategoryText || null,
+    category: category || null,
+    subCategory: subCategory || null,
     description: description ?? "",
     amount: Math.abs(parseJapaneseNumber(amountText)),
     type,

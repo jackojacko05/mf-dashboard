@@ -64,5 +64,9 @@ dedicated GCS bucket. Neither is written to Git or BigQuery. A 1Password
 Service Account token can optionally be stored in Secret Manager for automatic
 re-login; without it, rerun the browser bootstrap when the session expires.
 
+Account refresh waits at most five minutes per run. A still-updating institution
+is kept in `account_status_effective` as stale/incomplete instead of blocking the
+entire daily ingestion for the upstream crawler's twenty-minute default.
+
 The setup grants `HERMES_READER_SA` read-only access to the finance dataset. It
 defaults to `hermes-vps-sa@${GCP_PROJECT_ID}.iam.gserviceaccount.com`.

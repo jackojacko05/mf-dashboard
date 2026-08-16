@@ -464,11 +464,21 @@ describe("parseDetailRow", () => {
     },
   );
 
-  test.each([5, 6])(
-    "カテゴリ列 %i の取得に失敗した行があれば月次置換へ進まない",
-    async (failedColumn) => {
+  test.each([
+    [5, "未分類", "expense"],
+    [6, null, "transfer"],
+  ] as const)(
+    "カテゴリ列 %i の取得に失敗しても取引を保持する",
+    async (failedColumn, expectedCategory, expectedType) => {
+      const missingChild = {
+        count: vi.fn<() => Promise<number>>().mockResolvedValue(0),
+      } as unknown as Locator;
+      const accountCell = {
+        locator: vi.fn<(selector: string) => Locator>().mockReturnValue(missingChild),
+        textContent: vi.fn<Locator["textContent"]>().mockResolvedValue("Account A"),
+      } as unknown as Locator;
       const texts = new Map([
-        [1, "2026/07/01"],
+        [1, "07/01"],
         [2, "Transaction A"],
         [3, "1,000"],
         [5, ""],
@@ -476,11 +486,14 @@ describe("parseDetailRow", () => {
       ]);
       const cells = {
         nth: vi.fn<(index: number) => Locator>((index) => {
+          if (index === 4) return accountCell;
           return {
             textContent: vi.fn<Locator["textContent"]>().mockImplementation(async () => {
               if (index === failedColumn) throw new Error("Detached cell");
               return texts.get(index) ?? "";
             }),
+            getAttribute: vi.fn<Locator["getAttribute"]>().mockResolvedValue(null),
+            innerHTML: vi.fn<Locator["innerHTML"]>().mockResolvedValue(""),
           } as unknown as Locator;
         }),
       } as unknown as Locator;
@@ -491,9 +504,11 @@ describe("parseDetailRow", () => {
         locator: vi.fn<(selector: string) => Locator>().mockReturnValue(cells),
       } as unknown as Locator;
 
-      await expect(parseDetailRow(row, 2026)).rejects.toThrow(
-        "Incomplete cash flow transaction row",
-      );
+      await expect(parseDetailRow(row, 2026)).resolves.toMatchObject({
+        category: expectedCategory,
+        subCategory: null,
+        type: expectedType,
+      });
     },
   );
 
