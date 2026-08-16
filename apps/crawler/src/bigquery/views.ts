@@ -28,6 +28,9 @@ WITH normalized AS (
     LOWER(TRIM(REGEXP_REPLACE(IFNULL(t.description, ''), r'\\s+', ' '))) AS normalized_description
   FROM ${d}.mf_transactions\` AS t
   WHERE t.date BETWEEN DATE '1900-01-01' AND DATE '2100-01-01'
+    AND t.type IN ('income', 'expense')
+    AND NOT t.is_transfer
+    AND NOT t.is_excluded_from_calculation
 ),
 ranked AS (
   SELECT
@@ -38,42 +41,38 @@ ranked AS (
         n.type,
         n.amount,
         IFNULL(n.account_id, -1),
-        IFNULL(n.category, ''),
-        IFNULL(n.sub_category, ''),
-        n.normalized_description,
-        n.is_transfer,
-        n.is_excluded_from_calculation,
-        IFNULL(n.transfer_target, ''),
-        IFNULL(n.transfer_target_account_id, -1)
-    ) AS duplicate_count,
+        n.normalized_description
+    ) AS source_record_count,
     ROW_NUMBER() OVER (
       PARTITION BY
         n.date,
         n.type,
         n.amount,
         IFNULL(n.account_id, -1),
-        IFNULL(n.category, ''),
-        IFNULL(n.sub_category, ''),
-        n.normalized_description,
-        n.is_transfer,
-        n.is_excluded_from_calculation,
-        IFNULL(n.transfer_target, ''),
-        IFNULL(n.transfer_target_account_id, -1)
+        n.normalized_description
       ORDER BY n.updated_at DESC, SAFE_CAST(n.mf_id AS INT64) DESC, n.mf_id DESC
     ) AS duplicate_rank
   FROM normalized AS n
 )
 SELECT
-  r.* EXCEPT(duplicate_rank),
+  r.mf_id AS transaction_id,
   TO_HEX(SHA256(CONCAT(
     CAST(r.date AS STRING), '|', r.type, '|', CAST(r.amount AS STRING), '|',
-    CAST(IFNULL(r.account_id, -1) AS STRING), '|', IFNULL(r.category, ''), '|',
-    IFNULL(r.sub_category, ''), '|', r.normalized_description, '|',
-    CAST(r.is_transfer AS STRING), '|', CAST(r.is_excluded_from_calculation AS STRING), '|',
-    IFNULL(r.transfer_target, ''), '|',
-    CAST(IFNULL(r.transfer_target_account_id, -1) AS STRING)
-  ))) AS transaction_key
+    CAST(IFNULL(r.account_id, -1) AS STRING), '|', r.normalized_description
+  ))) AS transaction_key,
+  r.source_record_count,
+  r.date,
+  r.type,
+  r.category,
+  r.sub_category,
+  r.description,
+  r.amount,
+  a.mf_id AS account_id,
+  a.name AS account_name,
+  a.institution,
+  r.updated_at
 FROM ranked AS r
+LEFT JOIN ${d}.mf_accounts\` AS a ON a.id = r.account_id
 WHERE duplicate_rank = 1`,
     `CREATE OR REPLACE VIEW ${d}.silver_holdings_daily\` AS
 SELECT
@@ -229,44 +228,61 @@ SELECT
   a.updated_at
 FROM ${d}.gold_assets_daily\` AS a
 LEFT JOIN liabilities AS l USING (date, group_id)`,
-    `CREATE OR REPLACE VIEW ${d}.gold_cash_flow_transactions\` AS
+    `CREATE OR REPLACE VIEW ${d}.gold_cash_flow_daily\` AS
 SELECT
-  t.mf_id AS transaction_id,
-  t.transaction_key,
-  t.duplicate_count,
-  t.date,
-  t.type,
-  t.category,
-  t.sub_category,
-  t.description,
-  t.amount,
-  a.mf_id AS account_id,
-  a.name AS account_name,
-  a.institution,
-  t.updated_at
+  date,
+  SUM(IF(type = 'income', amount, 0)) AS income_yen,
+  SUM(IF(type = 'expense', amount, 0)) AS spending_yen,
+  SUM(IF(type = 'income', amount, -amount)) AS balance_yen,
+  COUNTIF(type = 'income') AS income_count,
+  COUNTIF(type = 'expense') AS spending_count,
+  COUNT(*) AS transaction_count,
+  MAX(updated_at) AS updated_at
 FROM ${d}.silver_transactions\` AS t
-LEFT JOIN ${d}.mf_accounts\` AS a ON a.id = t.account_id
-WHERE NOT t.is_transfer AND NOT t.is_excluded_from_calculation`,
+GROUP BY date`,
+    `CREATE OR REPLACE VIEW ${d}.gold_cash_flow_monthly\` AS
+SELECT
+  DATE_TRUNC(date, MONTH) AS month,
+  SUM(IF(type = 'income', amount, 0)) AS income_yen,
+  SUM(IF(type = 'expense', amount, 0)) AS spending_yen,
+  SUM(IF(type = 'income', amount, -amount)) AS balance_yen,
+  COUNTIF(type = 'income') AS income_count,
+  COUNTIF(type = 'expense') AS spending_count,
+  COUNT(*) AS transaction_count,
+  MAX(updated_at) AS updated_at
+FROM ${d}.silver_transactions\`
+GROUP BY month`,
+    `CREATE OR REPLACE VIEW ${d}.gold_spending_monthly_by_category\` AS
+SELECT
+  DATE_TRUNC(date, MONTH) AS month,
+  COALESCE(category, '未分類') AS category,
+  COALESCE(sub_category, '未分類') AS sub_category,
+  SUM(amount) AS spending_yen,
+  COUNT(*) AS transaction_count,
+  MAX(updated_at) AS updated_at
+FROM ${d}.silver_transactions\`
+WHERE type = 'expense'
+GROUP BY month, category, sub_category`,
+    `DROP VIEW IF EXISTS ${d}.gold_cash_flow_transactions\``,
     `CREATE OR REPLACE VIEW ${d}.transactions_effective\` AS
 SELECT
-  t.mf_id AS transaction_id,
+  t.transaction_id,
   t.transaction_key,
-  t.duplicate_count,
+  t.source_record_count AS duplicate_count,
   t.date,
   t.type,
   t.category,
   t.sub_category,
   t.description,
   t.amount,
-  t.is_transfer,
-  t.is_excluded_from_calculation,
-  t.transfer_target,
-  a.mf_id AS account_id,
-  a.name AS account_name,
-  a.institution,
+  FALSE AS is_transfer,
+  FALSE AS is_excluded_from_calculation,
+  CAST(NULL AS STRING) AS transfer_target,
+  t.account_id,
+  t.account_name,
+  t.institution,
   t.updated_at
-FROM ${d}.silver_transactions\` AS t
-LEFT JOIN ${d}.mf_accounts\` AS a ON a.id = t.account_id`,
+FROM ${d}.silver_transactions\` AS t`,
     `CREATE OR REPLACE VIEW ${d}.holdings_daily\` AS
 SELECT * FROM ${d}.silver_holdings_daily\``,
     `CREATE OR REPLACE VIEW ${d}.net_worth_daily\` AS

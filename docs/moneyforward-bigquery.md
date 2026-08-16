@@ -28,13 +28,16 @@ health ingestion, with explicit Medallion responsibilities:
   `silver_holdings_daily`, `silver_asset_history`, and
   `silver_asset_history_categories` select canonical records. The optional
   `silver_asset_history_corrections` view selects the latest dated correction
-  without changing the raw source. Transaction
-  duplicates are identified by their complete normalized business fields;
-  `duplicate_count` keeps the source multiplicity inspectable.
+  without changing the raw source. `silver_transactions` has one row per
+  accounting event: transfer/excluded mirror rows are removed first, then
+  repeated source rows are canonicalized by date, type, amount, account, and
+  normalized description. `source_record_count` keeps the source multiplicity
+  inspectable.
 - Gold: `gold_assets_daily` is the authoritative one-row-per-day asset history,
   `gold_net_worth_daily` combines it with canonical liabilities when available,
-  and `gold_cash_flow_transactions` excludes transfers and records that Money
-  Forward marks as outside calculations.
+  and `gold_cash_flow_daily`, `gold_cash_flow_monthly`, and
+  `gold_spending_monthly_by_category` contain only aggregated measures. Gold
+  never exposes transaction-level rows.
 
 `gold_assets_daily` includes the five Money Forward asset categories,
 `category_sum`, and `reconciliation_difference`. A healthy row has
@@ -45,8 +48,8 @@ must not be committed to Git.
 
 Compatibility views remain available for existing consumers:
 
-- `transactions_effective` reads from `silver_transactions` and retains the
-  transfer/exclusion flags.
+- `transactions_effective` reads from `silver_transactions`; transfer and
+  excluded mirrors are no longer part of this compatibility view.
 - `holdings_daily` reads from `silver_holdings_daily`.
 - `net_worth_daily` reads from `gold_net_worth_daily`.
 - `asset_history_effective` reads from `gold_assets_daily`, so `total_assets`
@@ -54,9 +57,10 @@ Compatibility views remain available for existing consumers:
 - `asset_history_categories_effective` provides the normalized category rows.
 - `account_status_effective` provides the latest institution refresh state.
 
-Partitioned Bronze objects require a date filter. General cash-flow analysis
-should use `gold_cash_flow_transactions`; use `transactions_effective` only
-when transfer or excluded records are intentionally in scope.
+Partitioned Bronze objects require a date filter. Use `silver_transactions`
+for transaction-level analysis and a matching Gold view only when aggregation
+is required. Transfer or excluded source records remain available in Bronze
+for audits but are not accounting entries.
 
 ## Setup
 
