@@ -31,6 +31,15 @@ function incompleteCashFlowRow(fields: string[]): Error {
   return new Error(`Incomplete cash flow transaction row (${fields.join(", ")})`);
 }
 
+export function cashFlowTextShape(value: string): string {
+  return Array.from(value, (character) => {
+    if (/\d/u.test(character)) return "#";
+    if (/\s/u.test(character)) return "_";
+    if (/\p{L}/u.test(character)) return "X";
+    return character;
+  }).join("");
+}
+
 export function isSupportedCashFlowAmount(value: string): boolean {
   const normalized = value.replace(/\s/g, "").replace(/\(振替\)$/, "");
   return CASH_FLOW_AMOUNT_PATTERN.test(normalized);
@@ -319,7 +328,22 @@ export async function parseDetailRow(
     description === null ? "description" : null,
     !isSupportedCashFlowAmount(amountText) ? "amount" : null,
   ].filter((field): field is string => field !== null);
-  if (incompleteFields.length > 0) throw incompleteCashFlowRow(incompleteFields);
+  if (incompleteFields.length > 0) {
+    if (incompleteFields.includes("amount")) {
+      const [cellCount, amountClass] = await Promise.all([
+        Promise.resolve()
+          .then(() => cells.count())
+          .catch(() => -1),
+        Promise.resolve()
+          .then(() => cells.nth(DETAIL_COLUMNS.AMOUNT).getAttribute("class"))
+          .catch(() => null),
+      ]);
+      warn(
+        `Unsupported cash flow amount shape: cells=${cellCount}, class=${amountClass ?? ""}, shape=${cashFlowTextShape(amountText)}`,
+      );
+    }
+    throw incompleteCashFlowRow(incompleteFields);
+  }
 
   // グループ2: カテゴリ情報を並列取得
   const [categoryText, subCategoryText] = await Promise.all([

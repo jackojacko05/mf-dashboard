@@ -2,6 +2,7 @@ import type { Locator, Page } from "playwright";
 import { describe, expect, test, vi } from "vitest";
 import {
   buildMonthRange,
+  cashFlowTextShape,
   extractCashFlowFromPage,
   isSupportedCashFlowAmount,
   parseDetailRow,
@@ -10,6 +11,10 @@ import {
   scrapeCashFlowHistory,
   verifyCashFlowRowsComplete,
 } from "./cash-flow-history.js";
+
+test("金額の診断表示から数字と文字を除去する", () => {
+  expect(cashFlowTextShape(" 1,234円（振替）")).toBe("_#,###X（XX）");
+});
 
 describe("buildMonthRange", () => {
   test.each([
