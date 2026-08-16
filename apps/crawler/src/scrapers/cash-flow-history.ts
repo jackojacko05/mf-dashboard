@@ -28,6 +28,7 @@ const TEXT_TIMEOUT = 1000;
 const TEXT_READ_ATTEMPTS = 3;
 const SUMMARY_TIMEOUT = 3000;
 const CASH_FLOW_REQUEST_TIMEOUT = 1000;
+const CASH_FLOW_RESPONSE_TIMEOUT = 30000;
 const CASH_FLOW_AJAX_STATE = "__mfDashboardCashFlowAjax";
 const CASH_FLOW_AMOUNT_PATTERN =
   /^(?:(?:[+\-−▲][¥$]?)|(?:[¥$][+\-−▲]?))?(?:\d{1,3}(?:,\d{3})+|\d+)(?:円)?$/;
@@ -150,7 +151,7 @@ export async function waitForCashFlowRequestAndResponse(
   );
   const responsePromise = page.waitForResponse(
     (response) => response.url().includes("/cf/fetch"),
-    { timeout: CASH_FLOW_REQUEST_TIMEOUT },
+    { timeout: CASH_FLOW_RESPONSE_TIMEOUT },
   );
   const observedResponse = responsePromise.catch((error) => ({ error }) as const);
   const clickPromise = click();
