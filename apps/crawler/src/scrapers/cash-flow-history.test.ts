@@ -187,6 +187,7 @@ describe("scrapeCashFlowHistory", () => {
           count: vi.fn<() => Promise<number>>().mockResolvedValue(0),
         } as unknown as Locator;
       }),
+      waitForRequest: vi.fn<() => Promise<typeof request>>().mockResolvedValue(request),
       waitForResponse: vi
         .fn<() => Promise<never>>()
         .mockRejectedValue(new Error("Navigation Timeout")),
@@ -225,7 +226,10 @@ describe("scrapeCashFlowHistory", () => {
       goto: vi.fn<() => Promise<null>>().mockResolvedValue(null),
       evaluate: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
       waitForFunction: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      waitForRequest: vi.fn<() => Promise<typeof request>>().mockResolvedValue(request),
       waitForResponse: vi.fn<() => Promise<unknown>>().mockResolvedValue({
+        url: vi.fn<() => string>().mockReturnValue("/cf/fetch"),
+        status: vi.fn<() => number>().mockReturnValue(200),
         finished: vi
           .fn<() => Promise<Error>>()
           .mockResolvedValue(new Error("response body failed")),
@@ -711,10 +715,15 @@ describe("scrapeCashFlowHistory no-op navigation", () => {
     let navigationIndex = 0;
     const csvLink = {
       first: vi.fn(() => csvLink),
-      count: vi.fn().mockResolvedValue(1),
+      count: vi.fn().mockResolvedValue(0),
       getAttribute: vi.fn().mockImplementation(async () =>
         `/cf/csv?year=${month.slice(0, 4)}&month=${Number(month.slice(5))}`,
       ),
+    };
+    const monthHeader = {
+      first: vi.fn(() => monthHeader),
+      count: vi.fn().mockResolvedValue(1),
+      textContent: vi.fn().mockImplementation(async () => `${month.slice(0, 4)}年${Number(month.slice(5))}月`),
     };
     const amountCell = { textContent: vi.fn().mockResolvedValue("0") };
     const summaryCells = { nth: vi.fn().mockReturnValue(amountCell) };
@@ -745,6 +754,7 @@ describe("scrapeCashFlowHistory no-op navigation", () => {
         if (selector === "#cf-detail-table") {
           return { waitFor: vi.fn().mockResolvedValue(undefined) };
         }
+        if (selector === ".fc-header-title h2") return monthHeader;
         if (selector === "a[href*='/cf/csv']") return csvLink;
         if (selector === "#monthly_total_table_kakeibo tbody tr") return summaryRows;
         if (selector === "#cf-detail-table tbody > tr") return detailRows;
@@ -758,11 +768,14 @@ describe("scrapeCashFlowHistory no-op navigation", () => {
   test("二回連続no-opで停止する", async () => {
     const page = createPage(["noop", "noop"]);
     const onHistoryStop = vi.fn();
+    const onMonthComplete = vi.fn();
 
-    const results = await scrapeCashFlowHistory(page, 4, { onHistoryStop });
+    const results = await scrapeCashFlowHistory(page, 4, { onHistoryStop, onMonthComplete });
 
     expect(results).toHaveLength(1);
     expect(onHistoryStop).toHaveBeenCalledWith("2026-07");
+    expect(onMonthComplete).toHaveBeenCalledOnce();
+    expect(onMonthComplete).toHaveBeenCalledWith("2026-07");
   });
 
   test("一回no-op後の成功で次の月を取得する", async () => {
