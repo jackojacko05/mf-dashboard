@@ -19,17 +19,48 @@ deployed.
 
 ## BigQuery objects
 
-Bronze mirror tables use the `mf_` prefix. The main Silver views are:
+The finance dataset uses the same raw-table plus effective-view pattern as the
+health ingestion, with explicit Medallion responsibilities:
 
-- `transactions_effective`: transactions joined to account metadata.
-- `holdings_daily`: daily holding values joined to accounts and groups.
-- `net_worth_daily`: daily assets, liabilities, and net worth.
-- `account_status_effective`: latest institution refresh state.
-- `asset_history_effective`: Money Forward asset history by category.
+- Bronze: the `mf_*` tables are a lossless SQLite mirror. Repeated snapshots
+  and source transaction IDs are retained for audit and replay.
+- Silver: `silver_daily_snapshots`, `silver_transactions`,
+  `silver_holdings_daily`, `silver_asset_history`, and
+  `silver_asset_history_categories` select canonical records. The optional
+  `silver_asset_history_corrections` view selects the latest dated correction
+  without changing the raw source. `silver_transactions` has one row per
+  accounting event: transfer/excluded mirror rows are removed first, then
+  repeated source rows are canonicalized by date, type, amount, account, and
+  normalized description. `source_record_count` keeps the source multiplicity
+  inspectable.
+- Gold: `gold_assets_daily` is the authoritative one-row-per-day asset history,
+  `gold_net_worth_daily` combines it with canonical liabilities when available,
+  and `gold_cash_flow_daily`, `gold_cash_flow_monthly`, and
+  `gold_spending_monthly_by_category` contain only aggregated measures. Gold
+  never exposes transaction-level rows.
 
-Partitioned objects require a date filter. Transfers and excluded transactions
-remain available in `transactions_effective`; analyses must use
-`is_transfer` and `is_excluded_from_calculation` deliberately.
+`gold_assets_daily` includes the five Money Forward asset categories,
+`category_sum`, and `reconciliation_difference`. A healthy row has
+`reconciliation_difference = 0`. Source revisions can be overlaid in
+`mf_asset_history_corrections`; `correction_applied` and `correction_reason`
+make every use visible to consumers. Correction values are operational data and
+must not be committed to Git.
+
+Compatibility views remain available for existing consumers:
+
+- `transactions_effective` reads from `silver_transactions`; transfer and
+  excluded mirrors are no longer part of this compatibility view.
+- `holdings_daily` reads from `silver_holdings_daily`.
+- `net_worth_daily` reads from `gold_net_worth_daily`.
+- `asset_history_effective` reads from `gold_assets_daily`, so `total_assets`
+  appears once per date rather than once per category.
+- `asset_history_categories_effective` provides the normalized category rows.
+- `account_status_effective` provides the latest institution refresh state.
+
+Partitioned Bronze objects require a date filter. Use `silver_transactions`
+for transaction-level analysis and a matching Gold view only when aggregation
+is required. Transfer or excluded source records remain available in Bronze
+for audits but are not accounting entries.
 
 ## Setup
 

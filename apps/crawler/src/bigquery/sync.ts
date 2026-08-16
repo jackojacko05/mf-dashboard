@@ -23,6 +23,32 @@ async function ensureDataset(bigQuery: BigQuery, config: BigQuerySyncConfig): Pr
   return dataset;
 }
 
+async function ensureAssetHistoryCorrectionsTable(dataset: Dataset): Promise<void> {
+  const table = dataset.table("mf_asset_history_corrections");
+  const [exists] = await table.exists();
+  if (exists) return;
+
+  await dataset.createTable("mf_asset_history_corrections", {
+    clustering: { fields: ["group_id"] },
+    schema: {
+      fields: [
+        { mode: "REQUIRED", name: "group_id", type: "STRING" },
+        { mode: "REQUIRED", name: "date", type: "DATE" },
+        { mode: "REQUIRED", name: "total_assets", type: "INTEGER" },
+        { mode: "REQUIRED", name: "deposits_cash", type: "INTEGER" },
+        { mode: "REQUIRED", name: "stocks_spot", type: "INTEGER" },
+        { mode: "REQUIRED", name: "investment_trusts", type: "INTEGER" },
+        { mode: "REQUIRED", name: "pension", type: "INTEGER" },
+        { mode: "REQUIRED", name: "points", type: "INTEGER" },
+        { mode: "REQUIRED", name: "reason", type: "STRING" },
+        { mode: "REQUIRED", name: "created_at", type: "TIMESTAMP" },
+        { mode: "REQUIRED", name: "updated_at", type: "TIMESTAMP" },
+      ],
+    },
+    timePartitioning: { field: "date", requirePartitionFilter: true, type: "DAY" },
+  });
+}
+
 async function replaceTable(
   bigQuery: BigQuery,
   dataset: Dataset,
@@ -88,6 +114,7 @@ export async function syncDatabaseToBigQuery(
       rowCounts[source.name] = rows.length;
       log(`BigQuery ${source.name}: ${rows.length} rows`);
     }
+    await ensureAssetHistoryCorrectionsTable(dataset);
     await createAnalyticalViews(bigQuery, config);
   } finally {
     await rm(tempDir, { force: true, recursive: true });
