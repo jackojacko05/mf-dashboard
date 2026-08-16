@@ -2,7 +2,10 @@ import { getJstDateParts } from "@mf-dashboard/date-utils";
 import type { CashFlowSummary, CashFlowItem } from "@mf-dashboard/db/types";
 import { mfUrls } from "@mf-dashboard/meta/urls";
 import type { Locator, Page } from "playwright";
-import { getHistoryMonth } from "../history-months.js";
+import {
+  getHistoryMonth,
+  validateHistoryMonthProgression,
+} from "../history-months.js";
 import { log, debug, warn } from "../logger.js";
 import { parseJapaneseNumber, convertDateToIso } from "../parsers.js";
 import type { CashFlowHistoryResult } from "../types.js";
@@ -499,8 +502,12 @@ export async function scrapeCashFlowHistory(
     onMonthStart?: (month: string) => Promise<void> | void;
     onMonthComplete?: (month: string) => Promise<void> | void;
     onMonthFailure?: (month: string, error: unknown) => Promise<void> | void;
+    onHistoryStop?: (month: string) => Promise<void> | void;
   } = {},
 ): Promise<CashFlowHistoryResult[]> {
+  if (!Number.isSafeInteger(monthsToScrape) || monthsToScrape <= 0) {
+    throw new Error("monthsToScrape must be a positive integer");
+  }
   log(`Scraping cash flow history for ${monthsToScrape} months...`);
 
   await page.goto(mfUrls.cashFlow, { waitUntil: "domcontentloaded" });
@@ -537,8 +544,9 @@ export async function scrapeCashFlowHistory(
 
         // /cf/fetch 後も月が変わらなければ、これ以上データがないことを意味する
         const newMonth = await getDisplayedCashFlowMonth(page);
-        if (newMonth === currentMonth) {
+        if (!validateHistoryMonthProgression(currentMonth, newMonth)) {
           log(`  No more months available after ${currentMonth}, stopping.`);
+          await callbacks.onHistoryStop?.(currentMonth);
           await callbacks.onMonthComplete?.(targetMonth);
           break;
         }
