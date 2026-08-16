@@ -14,6 +14,13 @@ import {
   waitForCashFlowRequestAndResponse,
 } from "./cash-flow-history.js";
 
+const cashFlowRequest = { url: () => "/cf/fetch" };
+const cashFlowResponse = (status: number, finished: unknown = null) => ({
+  url: () => "/cf/fetch",
+  status: () => status,
+  finished: vi.fn<() => Promise<unknown>>().mockResolvedValue(finished),
+});
+
 test("金額の診断表示から数字と文字を除去する", () => {
   expect(cashFlowTextShape(" 1,234円（振替）")).toBe("_#,###X（XX）");
 });
