@@ -11,6 +11,7 @@ import {
   scrapeCashFlowHistory,
   verifyCashFlowRowsComplete,
   isCashFlowPreviousButtonDisabled,
+  waitForCashFlowRequestAndResponse,
 } from "./cash-flow-history.js";
 
 test("金額の診断表示から数字と文字を除去する", () => {
@@ -651,5 +652,124 @@ describe("parseDetailRow", () => {
     } as unknown as Locator;
 
     await expect(parseDetailRow(row, 2026)).rejects.toThrow("Incomplete cash flow transaction row");
+  });
+});
+
+describe("waitForCashFlowRequestAndResponse", () => {
+  const request = { url: () => "/cf/fetch" };
+  const response = (status: number, finished: unknown = null) => ({
+    url: () => "/cf/fetch",
+    status: () => status,
+    finished: vi.fn<() => Promise<unknown>>().mockResolvedValue(finished),
+  });
+
+  test("waitForRequestなしはthrowする", async () => {
+    const page = { waitForResponse: vi.fn() } as unknown as Page;
+    await expect(waitForCashFlowRequestAndResponse(page, async () => undefined)).rejects.toThrow(
+      "request observation is unavailable",
+    );
+  });
+
+  test("リクエストなしはfalseを返す", async () => {
+    const page = {
+      waitForRequest: vi.fn().mockRejectedValue(new Error("Timeout 1000ms")),
+      waitForResponse: vi.fn().mockRejectedValue(new Error("Timeout 1000ms")),
+    } as unknown as Page;
+    const click = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+
+    await expect(waitForCashFlowRequestAndResponse(page, click)).resolves.toBe(false);
+    expect(click).toHaveBeenCalledOnce();
+  });
+
+  test("リクエストありHTTP非200はthrowする", async () => {
+    const page = {
+      waitForRequest: vi.fn().mockResolvedValue(request),
+      waitForResponse: vi.fn().mockResolvedValue(response(500)),
+    } as unknown as Page;
+
+    await expect(waitForCashFlowRequestAndResponse(page, async () => undefined)).rejects.toThrow(
+      "HTTP 500",
+    );
+  });
+
+  test("finished失敗はthrowする", async () => {
+    const failure = new Error("response body failed");
+    const page = {
+      waitForRequest: vi.fn().mockResolvedValue(request),
+      waitForResponse: vi.fn().mockResolvedValue(response(200, failure)),
+    } as unknown as Page;
+
+    await expect(waitForCashFlowRequestAndResponse(page, async () => undefined)).rejects.toThrow(
+      "response body failed",
+    );
+  });
+});
+
+describe("scrapeCashFlowHistory no-op navigation", () => {
+  const createPage = (navigationResults: Array<"noop" | "success">): Page => {
+    let month = "2026-07";
+    let navigationIndex = 0;
+    const csvLink = {
+      first: vi.fn(() => csvLink),
+      count: vi.fn().mockResolvedValue(1),
+      getAttribute: vi.fn().mockImplementation(async () =>
+        `/cf/csv?year=${month.slice(0, 4)}&month=${Number(month.slice(5))}`,
+      ),
+    };
+    const amountCell = { textContent: vi.fn().mockResolvedValue("0") };
+    const summaryCells = { nth: vi.fn().mockReturnValue(amountCell) };
+    const summaryRow = { locator: vi.fn().mockReturnValue(summaryCells) };
+    const summaryRows = { first: vi.fn().mockReturnValue(summaryRow) };
+    const detailRows = { count: vi.fn().mockResolvedValue(0) };
+    const previousButton = {
+      first: vi.fn(() => previousButton),
+      count: vi.fn().mockResolvedValue(1),
+      getAttribute: vi.fn().mockResolvedValue(null),
+      click: vi.fn().mockImplementation(async () => {
+        if (navigationResults[navigationIndex++] === "success") month = "2026-06";
+      }),
+    };
+    const page = {
+      goto: vi.fn().mockResolvedValue(null),
+      evaluate: vi.fn().mockResolvedValue(undefined),
+      waitForFunction: vi.fn().mockResolvedValue(undefined),
+      waitForRequest: vi.fn().mockImplementation(async () => {
+        if (navigationResults[navigationIndex] === "success") return request;
+        throw new Error("Timeout 1000ms");
+      }),
+      waitForResponse: vi.fn().mockImplementation(async () => {
+        if (navigationResults[navigationIndex] === "success") return response(200);
+        throw new Error("Timeout 1000ms");
+      }),
+      locator: vi.fn().mockImplementation((selector: string) => {
+        if (selector === "#cf-detail-table") {
+          return { waitFor: vi.fn().mockResolvedValue(undefined) };
+        }
+        if (selector === "a[href*='/cf/csv']") return csvLink;
+        if (selector === "#monthly_total_table_kakeibo tbody tr") return summaryRows;
+        if (selector === "#cf-detail-table tbody > tr") return detailRows;
+        if (selector === "button.fc-button-prev, span.fc-button-prev") return previousButton;
+        return { count: vi.fn().mockResolvedValue(0) };
+      }),
+    } as unknown as Page;
+    return page;
+  };
+
+  test("二回連続no-opで停止する", async () => {
+    const page = createPage(["noop", "noop"]);
+    const onHistoryStop = vi.fn();
+
+    const results = await scrapeCashFlowHistory(page, 4, { onHistoryStop });
+
+    expect(results).toHaveLength(1);
+    expect(onHistoryStop).toHaveBeenCalledWith("2026-07");
+  });
+
+  test("一回no-op後の成功で次の月を取得する", async () => {
+    const page = createPage(["noop", "success"]);
+
+    const results = await scrapeCashFlowHistory(page, 3);
+
+    expect(results.map(({ month }) => month)).toEqual(["2026-07", "2026-06"]);
   });
 });
