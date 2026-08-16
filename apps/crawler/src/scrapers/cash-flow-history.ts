@@ -27,6 +27,7 @@ export const SUMMARY_COLUMNS = { INCOME: 0, EXPENSE: 2, BALANCE: 4 } as const;
 const TEXT_TIMEOUT = 1000;
 const TEXT_READ_ATTEMPTS = 3;
 const SUMMARY_TIMEOUT = 3000;
+const CASH_FLOW_REQUEST_TIMEOUT = 1000;
 const CASH_FLOW_AJAX_STATE = "__mfDashboardCashFlowAjax";
 const CASH_FLOW_AMOUNT_PATTERN =
   /^(?:(?:[+\-−▲][¥$]?)|(?:[¥$][+\-−▲]?))?(?:\d{1,3}(?:,\d{3})+|\d+)(?:円)?$/;
@@ -82,8 +83,8 @@ export function parseCashFlowMonthCsvHref(href: string | null): string | null {
 
 export async function waitForCashFlowFetchApplied(
   page: Page,
-  navigate: () => Promise<void>,
-): Promise<void> {
+  navigate: () => Promise<void | boolean>,
+): Promise<boolean> {
   await page.evaluate((stateKey) => {
     type AjaxSettings = { url?: string };
     type AjaxHandler = (event: unknown, xhr: unknown, settings: AjaxSettings) => void;
@@ -109,11 +110,13 @@ export async function waitForCashFlowFetchApplied(
   }, CASH_FLOW_AJAX_STATE);
 
   try {
-    await navigate();
+    const navigationResult = await navigate();
+    if (navigationResult === false) return false;
     await page.waitForFunction(
       (stateKey) => Reflect.get(window, stateKey)?.completed === true,
       CASH_FLOW_AJAX_STATE,
     );
+    return true;
   } finally {
     await page
       .evaluate((stateKey) => {
@@ -125,6 +128,51 @@ export async function waitForCashFlowFetchApplied(
       }, CASH_FLOW_AJAX_STATE)
       .catch(() => undefined);
   }
+}
+
+function isPlaywrightTimeout(error: unknown): boolean {
+  return error instanceof Error && /timeout/i.test(error.message);
+}
+
+export async function waitForCashFlowRequestAndResponse(
+  page: Page,
+  click: () => Promise<void>,
+): Promise<boolean> {
+  const waitForRequest = (page as Page & { waitForRequest?: Page["waitForRequest"] }).waitForRequest;
+  if (typeof waitForRequest !== "function") {
+    throw new Error("Cash flow request observation is unavailable");
+  }
+
+  const requestPromise = waitForRequest.call(
+    page,
+    (request) => request.url().includes("/cf/fetch"),
+    { timeout: CASH_FLOW_REQUEST_TIMEOUT },
+  );
+  const responsePromise = page.waitForResponse(
+    (response) => response.url().includes("/cf/fetch"),
+    { timeout: CASH_FLOW_REQUEST_TIMEOUT },
+  );
+  const observedResponse = responsePromise.catch((error) => ({ error }) as const);
+  const clickPromise = click();
+
+  let requestObserved = false;
+  try {
+    await requestPromise;
+    requestObserved = true;
+  } catch (error) {
+    if (!isPlaywrightTimeout(error)) throw error;
+  }
+  await clickPromise;
+
+  if (!requestObserved) return false;
+  const responseResult = await observedResponse;
+  if ("error" in responseResult) throw responseResult.error;
+  if (responseResult.status() !== 200) {
+    throw new Error(`Cash flow fetch returned HTTP ${responseResult.status()}`);
+  }
+  const responseFailure = await responseResult.finished();
+  if (responseFailure) throw responseFailure;
+  return true;
 }
 
 async function readTextWithRetry(locator: Locator, timeout: number): Promise<string | null> {
@@ -545,6 +593,7 @@ export async function scrapeCashFlowHistory(
   await page.locator("#cf-detail-table").waitFor({ state: "visible", timeout: 10000 });
 
   const results: CashFlowHistoryResult[] = [];
+  let consecutiveNoOpNavigations = 0;
 
   for (let i = 0; i < monthsToScrape; i++) {
     const targetMonth = await getDisplayedCashFlowMonth(page).catch(() =>
@@ -570,17 +619,24 @@ export async function scrapeCashFlowHistory(
         // 月が変わるまで待機（CSV linkのURLパラメータで判定）
         // クリックで /cf/fetch が発火するため、取りこぼさないよう先にリスナーを登録し、
         // レスポンス到着後にCSV linkの月パラメータが変わったかを確認する
-        await waitForCashFlowFetchApplied(page, async () => {
-          const [fetchResponse] = await Promise.all([
-            page.waitForResponse((res) => res.url().includes("/cf/fetch") && res.status() === 200),
-            prevButton.click(),
-          ]);
-          const responseFailure = await fetchResponse.finished();
-          if (responseFailure) throw responseFailure;
-        });
+        const requestApplied = await waitForCashFlowFetchApplied(page, () =>
+          waitForCashFlowRequestAndResponse(page, () => prevButton.click()),
+        );
 
         // /cf/fetch 後も月が変わらなければ、これ以上データがないことを意味する
         const newMonth = await getDisplayedCashFlowMonth(page);
+        if (!requestApplied && newMonth === currentMonth) {
+          consecutiveNoOpNavigations += 1;
+          if (consecutiveNoOpNavigations < 2) {
+            results.pop();
+            continue;
+          }
+          log(`  No previous-month request after ${currentMonth}, stopping.`);
+          await callbacks.onHistoryStop?.(currentMonth);
+          await callbacks.onMonthComplete?.(targetMonth);
+          break;
+        }
+        consecutiveNoOpNavigations = 0;
         if (!validateHistoryMonthProgression(currentMonth, newMonth)) {
           log(`  No more months available after ${currentMonth}, stopping.`);
           await callbacks.onHistoryStop?.(currentMonth);
