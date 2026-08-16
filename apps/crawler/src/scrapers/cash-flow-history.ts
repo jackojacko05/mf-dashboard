@@ -492,6 +492,27 @@ async function getDisplayedCashFlowMonth(page: Page): Promise<string> {
 }
 
 /**
+ * 前月コントロールがUI上で無効化されているか確認する。
+ * 無効化が明示されていない場合は、通信障害と区別するため false を返す。
+ */
+export async function isCashFlowPreviousButtonDisabled(button: Locator): Promise<boolean> {
+  if ((await button.count()) === 0) return false;
+  const previousButton = button.first();
+  const [disabled, ariaDisabled, className] = await Promise.all([
+    previousButton.getAttribute("disabled"),
+    previousButton.getAttribute("aria-disabled"),
+    previousButton.getAttribute("class"),
+  ]);
+  return (
+    disabled !== null ||
+    ariaDisabled?.toLowerCase() === "true" ||
+    /(?:^|\s)(?:disabled|fc-state-disabled|ui-state-disabled|is-disabled)(?:\s|$)/i.test(
+      className ?? "",
+    )
+  );
+}
+
+/**
  * 過去N月分の家計簿データを取得
  * UIの前月ボタンをクリックして月を切り替えながら取得
  */
@@ -529,6 +550,13 @@ export async function scrapeCashFlowHistory(
       if (i < monthsToScrape - 1) {
         const currentMonth = await getDisplayedCashFlowMonth(page);
         const prevButton = page.locator("button.fc-button-prev, span.fc-button-prev").first();
+
+        if (await isCashFlowPreviousButtonDisabled(prevButton)) {
+          log(`  No more months available after ${currentMonth}, stopping.`);
+          await callbacks.onHistoryStop?.(currentMonth);
+          await callbacks.onMonthComplete?.(targetMonth);
+          break;
+        }
 
         // 月が変わるまで待機（CSV linkのURLパラメータで判定）
         // クリックで /cf/fetch が発火するため、取りこぼさないよう先にリスナーを登録し、

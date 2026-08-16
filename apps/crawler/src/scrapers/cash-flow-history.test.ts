@@ -10,6 +10,7 @@ import {
   resolveCashFlowPeriod,
   scrapeCashFlowHistory,
   verifyCashFlowRowsComplete,
+  isCashFlowPreviousButtonDisabled,
 } from "./cash-flow-history.js";
 
 test("金額の診断表示から数字と文字を除去する", () => {
@@ -95,6 +96,35 @@ describe("verifyCashFlowRowsComplete", () => {
     await expect(verifyCashFlowRowsComplete(page, 0, totals)).rejects.toThrow(
       "explicit empty cash flow period",
     );
+  });
+});
+
+describe("isCashFlowPreviousButtonDisabled", () => {
+  const createButton = (attributes: Record<string, string | null>): Locator => {
+    let button: Locator;
+    button = {
+      count: vi.fn<() => Promise<number>>().mockResolvedValue(1),
+      first: vi.fn<() => Locator>(() => button),
+      getAttribute: vi
+        .fn<Locator["getAttribute"]>()
+        .mockImplementation(async (name) => attributes[name] ?? null),
+    } as unknown as Locator;
+    return button;
+  };
+
+  test.each([
+    { disabled: "" },
+    { "aria-disabled": "true" },
+    { class: "fc-button-prev fc-state-disabled" },
+    { class: "previous is-disabled" },
+  ])("明示的な無効化 $disabled $aria-disabled $class を検出する", async (attributes) => {
+    await expect(isCashFlowPreviousButtonDisabled(createButton(attributes))).resolves.toBe(true);
+  });
+
+  test("無効化属性やクラスがなければ通信待ちをスキップしない", async () => {
+    await expect(
+      isCashFlowPreviousButtonDisabled(createButton({ class: "fc-button-prev" })),
+    ).resolves.toBe(false);
   });
 });
 
