@@ -3,7 +3,7 @@ import type { CashFlowSummary, CashFlowItem } from "@mf-dashboard/db/types";
 import { mfUrls } from "@mf-dashboard/meta/urls";
 import type { Locator, Page } from "playwright";
 import { getHistoryMonth } from "../history-months.js";
-import { log, debug } from "../logger.js";
+import { log, debug, warn } from "../logger.js";
 import { parseJapaneseNumber, convertDateToIso } from "../parsers.js";
 import type { CashFlowHistoryResult } from "../types.js";
 
@@ -22,6 +22,7 @@ const DETAIL_COLUMNS = {
 export const SUMMARY_COLUMNS = { INCOME: 0, EXPENSE: 2, BALANCE: 4 } as const;
 
 const TEXT_TIMEOUT = 1000;
+const TEXT_READ_ATTEMPTS = 3;
 const SUMMARY_TIMEOUT = 3000;
 const CASH_FLOW_AJAX_STATE = "__mfDashboardCashFlowAjax";
 const CASH_FLOW_AMOUNT_PATTERN =
@@ -29,6 +30,15 @@ const CASH_FLOW_AMOUNT_PATTERN =
 
 function incompleteCashFlowRow(fields: string[]): Error {
   return new Error(`Incomplete cash flow transaction row (${fields.join(", ")})`);
+}
+
+export function cashFlowTextShape(value: string): string {
+  return Array.from(value, (character) => {
+    if (/\d/u.test(character)) return "#";
+    if (/\s/u.test(character)) return "_";
+    if (/\p{L}/u.test(character)) return "X";
+    return character;
+  }).join("");
 }
 
 export function isSupportedCashFlowAmount(value: string): boolean {
@@ -114,20 +124,27 @@ export async function waitForCashFlowFetchApplied(
   }
 }
 
+async function readTextWithRetry(locator: Locator, timeout: number): Promise<string | null> {
+  for (let attempt = 0; attempt < TEXT_READ_ATTEMPTS; attempt++) {
+    try {
+      return (await locator.textContent({ timeout }))?.trim() ?? "";
+    } catch {
+      // Cash-flow rows can be replaced immediately after the monthly AJAX update.
+      // Resolving the locator again is enough once the replacement has settled.
+    }
+  }
+  return null;
+}
+
 async function getText(locator: Locator, timeout = TEXT_TIMEOUT): Promise<string> {
-  const text = await locator.textContent({ timeout }).catch(() => "");
-  return (text ?? "").trim();
+  return (await readTextWithRetry(locator, timeout)) ?? "";
 }
 
 async function getTextWithFailureSignal(
   locator: Locator,
   timeout = TEXT_TIMEOUT,
 ): Promise<string | null> {
-  try {
-    return (await locator.textContent({ timeout }))?.trim() ?? "";
-  } catch {
-    return null;
-  }
+  return readTextWithRetry(locator, timeout);
 }
 
 async function getOptionalText(locator: Locator, timeout = TEXT_TIMEOUT): Promise<string | null> {
@@ -319,7 +336,22 @@ export async function parseDetailRow(
     description === null ? "description" : null,
     !isSupportedCashFlowAmount(amountText) ? "amount" : null,
   ].filter((field): field is string => field !== null);
-  if (incompleteFields.length > 0) throw incompleteCashFlowRow(incompleteFields);
+  if (incompleteFields.length > 0) {
+    if (incompleteFields.includes("amount")) {
+      const [cellCount, amountClass] = await Promise.all([
+        Promise.resolve()
+          .then(() => cells.count())
+          .catch(() => -1),
+        Promise.resolve()
+          .then(() => cells.nth(DETAIL_COLUMNS.AMOUNT).getAttribute("class"))
+          .catch(() => null),
+      ]);
+      warn(
+        `Unsupported cash flow amount shape: cells=${cellCount}, class=${amountClass ?? ""}, shape=${cashFlowTextShape(amountText)}`,
+      );
+    }
+    throw incompleteCashFlowRow(incompleteFields);
+  }
 
   // グループ2: カテゴリ情報を並列取得
   const [categoryText, subCategoryText] = await Promise.all([
@@ -327,8 +359,13 @@ export async function parseDetailRow(
     getTextWithFailureSignal(cells.nth(DETAIL_COLUMNS.SUB_CATEGORY)),
   ]);
 
+  // Money Forward occasionally renders an otherwise complete transaction without
+  // category cells. Preserve the transaction and make the missing classification
+  // explicit; the ID, date, description, amount, and row state remain mandatory.
+  const category = categoryText ?? "未分類";
+  const subCategory = subCategoryText ?? "";
   if (categoryText === null || subCategoryText === null) {
-    throw incompleteCashFlowRow(["category"]);
+    warn("Cash flow category cells unavailable; using an unclassified fallback.");
   }
 
   const { accountFrom, accountTo, hasTransferBox } = await parseAccountCell(
@@ -337,7 +374,7 @@ export async function parseDetailRow(
 
   const isExcludedFromCalculation = (rowClass ?? "").includes("mf-grayout");
 
-  const type = await detectTransactionType(cells.nth(DETAIL_COLUMNS.AMOUNT), categoryText);
+  const type = await detectTransactionType(cells.nth(DETAIL_COLUMNS.AMOUNT), category);
   const isTransfer = type === "transfer";
 
   let accountName: string | undefined;
@@ -357,8 +394,8 @@ export async function parseDetailRow(
   return {
     mfId,
     date,
-    category: categoryText || null,
-    subCategory: subCategoryText || null,
+    category: category || null,
+    subCategory: subCategory || null,
     description: description ?? "",
     amount: Math.abs(parseJapaneseNumber(amountText)),
     type,

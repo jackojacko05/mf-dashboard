@@ -2,6 +2,7 @@ import type { Locator, Page } from "playwright";
 import { describe, expect, test, vi } from "vitest";
 import {
   buildMonthRange,
+  cashFlowTextShape,
   extractCashFlowFromPage,
   isSupportedCashFlowAmount,
   parseDetailRow,
@@ -10,6 +11,10 @@ import {
   scrapeCashFlowHistory,
   verifyCashFlowRowsComplete,
 } from "./cash-flow-history.js";
+
+test("金額の診断表示から数字と文字を除去する", () => {
+  expect(cashFlowTextShape(" 1,234円（振替）")).toBe("_#,###X（XX）");
+});
 
 describe("buildMonthRange", () => {
   test.each([
@@ -310,6 +315,50 @@ describe("scrapeCashFlowHistory", () => {
 });
 
 describe("parseDetailRow", () => {
+  test("月切替直後の一時的なセル取得失敗を再試行する", async () => {
+    const missingChild = {
+      count: vi.fn<() => Promise<number>>().mockResolvedValue(0),
+    } as unknown as Locator;
+    const accountCell = {
+      locator: vi.fn<(selector: string) => Locator>().mockReturnValue(missingChild),
+      textContent: vi.fn<Locator["textContent"]>().mockResolvedValue("Account A"),
+    } as unknown as Locator;
+    const texts = new Map([
+      [1, "07/01"],
+      [2, "Transaction A"],
+      [3, "1,000"],
+      [5, ""],
+      [6, ""],
+    ]);
+    const descriptionText = vi
+      .fn<Locator["textContent"]>()
+      .mockRejectedValueOnce(new Error("Detached cell"))
+      .mockResolvedValue("Transaction A");
+    const cells = {
+      nth: vi.fn<(index: number) => Locator>((index) => {
+        if (index === 4) return accountCell;
+        return {
+          textContent:
+            index === 2
+              ? descriptionText
+              : vi.fn<Locator["textContent"]>().mockResolvedValue(texts.get(index) ?? ""),
+        } as unknown as Locator;
+      }),
+    } as unknown as Locator;
+    const row = {
+      getAttribute: vi
+        .fn<Locator["getAttribute"]>()
+        .mockImplementation(async (name) => (name === "id" ? "js-transaction-row-a" : "")),
+      locator: vi.fn<(selector: string) => Locator>().mockReturnValue(cells),
+    } as unknown as Locator;
+
+    await expect(parseDetailRow(row, 2026)).resolves.toMatchObject({
+      description: "Transaction A",
+      type: "transfer",
+    });
+    expect(descriptionText).toHaveBeenCalledTimes(2);
+  });
+
   test("正常に取得した空の内容欄を保持する", async () => {
     const missingChild = {
       count: vi.fn<() => Promise<number>>().mockResolvedValue(0),
@@ -464,11 +513,21 @@ describe("parseDetailRow", () => {
     },
   );
 
-  test.each([5, 6])(
-    "カテゴリ列 %i の取得に失敗した行があれば月次置換へ進まない",
-    async (failedColumn) => {
+  test.each([
+    [5, "未分類", "expense"],
+    [6, null, "transfer"],
+  ] as const)(
+    "カテゴリ列 %i の取得に失敗しても取引を保持する",
+    async (failedColumn, expectedCategory, expectedType) => {
+      const missingChild = {
+        count: vi.fn<() => Promise<number>>().mockResolvedValue(0),
+      } as unknown as Locator;
+      const accountCell = {
+        locator: vi.fn<(selector: string) => Locator>().mockReturnValue(missingChild),
+        textContent: vi.fn<Locator["textContent"]>().mockResolvedValue("Account A"),
+      } as unknown as Locator;
       const texts = new Map([
-        [1, "2026/07/01"],
+        [1, "07/01"],
         [2, "Transaction A"],
         [3, "1,000"],
         [5, ""],
@@ -476,11 +535,14 @@ describe("parseDetailRow", () => {
       ]);
       const cells = {
         nth: vi.fn<(index: number) => Locator>((index) => {
+          if (index === 4) return accountCell;
           return {
             textContent: vi.fn<Locator["textContent"]>().mockImplementation(async () => {
               if (index === failedColumn) throw new Error("Detached cell");
               return texts.get(index) ?? "";
             }),
+            getAttribute: vi.fn<Locator["getAttribute"]>().mockResolvedValue(null),
+            innerHTML: vi.fn<Locator["innerHTML"]>().mockResolvedValue(""),
           } as unknown as Locator;
         }),
       } as unknown as Locator;
@@ -491,9 +553,11 @@ describe("parseDetailRow", () => {
         locator: vi.fn<(selector: string) => Locator>().mockReturnValue(cells),
       } as unknown as Locator;
 
-      await expect(parseDetailRow(row, 2026)).rejects.toThrow(
-        "Incomplete cash flow transaction row",
-      );
+      await expect(parseDetailRow(row, 2026)).resolves.toMatchObject({
+        category: expectedCategory,
+        subCategory: null,
+        type: expectedType,
+      });
     },
   );
 
