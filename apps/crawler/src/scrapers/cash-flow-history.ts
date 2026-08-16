@@ -496,12 +496,21 @@ async function getDisplayedCashFlowMonth(page: Page): Promise<string> {
  * 無効化が明示されていない場合は、通信障害と区別するため false を返す。
  */
 export async function isCashFlowPreviousButtonDisabled(button: Locator): Promise<boolean> {
-  if ((await button.count()) === 0) return false;
-  const previousButton = button.first();
+  const buttonApi = button as unknown as {
+    count?: () => Promise<number>;
+    first?: () => Locator;
+  };
+  if (typeof buttonApi.count === "function" && (await buttonApi.count()) === 0) return false;
+
+  const previousButton =
+    typeof buttonApi.first === "function" ? buttonApi.first() : (button as Locator);
+  const getAttribute = (previousButton as unknown as { getAttribute?: unknown }).getAttribute;
+  if (typeof getAttribute !== "function") return false;
+
   const [disabled, ariaDisabled, className] = await Promise.all([
-    previousButton.getAttribute("disabled"),
-    previousButton.getAttribute("aria-disabled"),
-    previousButton.getAttribute("class"),
+    getAttribute.call(previousButton, "disabled"),
+    getAttribute.call(previousButton, "aria-disabled"),
+    getAttribute.call(previousButton, "class"),
   ]);
   return (
     disabled !== null ||
