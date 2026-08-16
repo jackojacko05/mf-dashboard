@@ -48,6 +48,7 @@ beforeEach(async () => {
     dbExists: true,
     scrapeMode: "month",
     isHistoryMode: false,
+    historyMaxMonths: 240,
     isDebug: false,
     isHeaded: false,
   });
@@ -260,6 +261,7 @@ describe("runCrawler progress", () => {
       dbExists: true,
       scrapeMode: "history",
       isHistoryMode: true,
+      historyMaxMonths: 240,
       isDebug: false,
       isHeaded: false,
     });
